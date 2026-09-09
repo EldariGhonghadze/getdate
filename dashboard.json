@@ -1,0 +1,881 @@
+{
+  "datasets": [
+    {
+      "name": "kpi_summary",
+      "displayName": "KPI შეჯამება",
+      "queryLines": [
+        "SELECT\n",
+        "  CASE\n",
+        "    WHEN l.IsProblemLoan = 1 THEN 'პრობლემური'\n",
+        "    ELSE 'ჯანსაღი'\n",
+        "  END AS loan_status,\n",
+        "  COUNT(DISTINCT l.LoanKey) AS loan_count,\n",
+        "  ROUND(\n",
+        "    COUNT(DISTINCT l.LoanKey) * 100.0 / SUM(COUNT(DISTINCT l.LoanKey)) OVER (),\n",
+        "    2\n",
+        "  ) AS pct_of_total,\n",
+        "  ROUND(AVG(l.AgreementInterestRate), 4) AS avg_interest_rate,\n",
+        "  SUM(\n",
+        "    CASE\n",
+        "      WHEN l.IsRefinanced = 1 THEN 1\n",
+        "      ELSE 0\n",
+        "    END\n",
+        "  ) AS refinanced_count\n",
+        "FROM\n",
+        "  getdata.raw.loan l\n",
+        "WHERE\n",
+        "  l.ValidTo > current_timestamp()\n",
+        "GROUP BY\n",
+        "  l.IsProblemLoan\n",
+        "ORDER BY\n",
+        "  loan_count DESC"
+      ]
+    },
+    {
+      "name": "loans_by_type",
+      "displayName": "სესხები ტიპის მიხედვით",
+      "queryLines": [
+        "SELECT\n",
+        "  lt.LoanTypeNameLat AS loan_type,\n",
+        "  CASE\n",
+        "    WHEN l.IsProblemLoan = 1 THEN 'პრობლემური'\n",
+        "    ELSE 'ჯანსაღი'\n",
+        "  END AS loan_status,\n",
+        "  COUNT(DISTINCT l.LoanKey) AS loan_count\n",
+        "FROM\n",
+        "  getdata.raw.loan l\n",
+        "    JOIN getdata.raw.loantype lt\n",
+        "      ON l.LoanTypeKey = lt.LoanTypeKey\n",
+        "WHERE\n",
+        "  l.ValidTo > current_timestamp()\n",
+        "GROUP BY\n",
+        "  lt.LoanTypeNameLat,\n",
+        "  l.IsProblemLoan\n",
+        "ORDER BY\n",
+        "  loan_type,\n",
+        "  loan_status"
+      ]
+    },
+    {
+      "name": "loans_by_product",
+      "displayName": "სესხები პროდუქტის ჯგუფის მიხედვით",
+      "queryLines": [
+        "SELECT\n",
+        "  pg.LoanProductGroupName AS product_group,\n",
+        "  CASE\n",
+        "    WHEN l.IsProblemLoan = 1 THEN 'პრობლემური'\n",
+        "    ELSE 'ჯანსაღი'\n",
+        "  END AS loan_status,\n",
+        "  COUNT(DISTINCT l.LoanKey) AS loan_count\n",
+        "FROM\n",
+        "  getdata.raw.loan l\n",
+        "    JOIN getdata.raw.loanproductgroup pg\n",
+        "      ON l.LoanProductGroupKey = pg.LoanProductGroupKey\n",
+        "WHERE\n",
+        "  l.ValidTo > current_timestamp()\n",
+        "GROUP BY\n",
+        "  pg.LoanProductGroupName,\n",
+        "  l.IsProblemLoan\n",
+        "ORDER BY\n",
+        "  product_group,\n",
+        "  loan_status"
+      ]
+    },
+    {
+      "name": "balance_trends",
+      "displayName": "ყოველთვიური ბალანსის დინამიკა",
+      "queryLines": [
+        "WITH latest_loan AS (\n",
+        "  SELECT\n",
+        "    LoanKey,\n",
+        "    IsProblemLoan\n",
+        "  FROM\n",
+        "    getdata.raw.loan\n",
+        "  WHERE\n",
+        "    ValidTo > current_timestamp()\n",
+        ")\n",
+        "SELECT\n",
+        "  DATE_TRUNC('month', lb.Date) AS month,\n",
+        "  CASE\n",
+        "    WHEN ll.IsProblemLoan = 1 THEN 'პრობლემური'\n",
+        "    ELSE 'ჯანსაღი'\n",
+        "  END AS loan_status,\n",
+        "  ROUND(SUM(lb.BalanceAmount), 2) AS total_balance\n",
+        "FROM\n",
+        "  getdata.raw.loanbalance lb\n",
+        "    JOIN latest_loan ll\n",
+        "      ON lb.LoanKey = ll.LoanKey\n",
+        "GROUP BY\n",
+        "  DATE_TRUNC('month', lb.Date),\n",
+        "  ll.IsProblemLoan\n",
+        "ORDER BY\n",
+        "  month,\n",
+        "  loan_status"
+      ]
+    },
+    {
+      "name": "loan_financials",
+      "displayName": "ყოველთვიური პრობლემური სესხების ფინანსები",
+      "queryLines": [
+        "WITH latest_loan AS (\n",
+        "  SELECT\n",
+        "    LoanKey,\n",
+        "    IsProblemLoan\n",
+        "  FROM\n",
+        "    getdata.raw.loan\n",
+        "  WHERE\n",
+        "    ValidTo > current_timestamp()\n",
+        "),\n",
+        "monthly_agg AS (\n",
+        "  SELECT\n",
+        "    DATE_TRUNC('month', lf.Date) AS month,\n",
+        "    ROUND(SUM(lf.TotalPaidPrincipalAmount), 2) AS total_paid_principal,\n",
+        "    ROUND(SUM(lf.TotalPaidInterestAmount), 2) AS total_paid_interest,\n",
+        "    ROUND(SUM(lf.TotalPaidOverduePenaltyAmount), 2) AS total_paid_penalty\n",
+        "  FROM\n",
+        "    getdata.raw.loanfinance lf\n",
+        "      JOIN latest_loan lf2\n",
+        "        ON lf.LoanKey = lf2.LoanKey\n",
+        "  WHERE\n",
+        "    lf2.IsProblemLoan = 1\n",
+        "  GROUP BY\n",
+        "    DATE_TRUNC('month', lf.Date)\n",
+        ")\n",
+        "SELECT\n",
+        "  month,\n",
+        "  'გადახდილი ძირი' AS metric,\n",
+        "  total_paid_principal AS amount\n",
+        "FROM\n",
+        "  monthly_agg\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  month,\n",
+        "  'გადახდილი პროცენტი' AS metric,\n",
+        "  total_paid_interest AS amount\n",
+        "FROM\n",
+        "  monthly_agg\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  month,\n",
+        "  'გადახდილი ჯარიმა' AS metric,\n",
+        "  total_paid_penalty AS amount\n",
+        "FROM\n",
+        "  monthly_agg\n",
+        "ORDER BY\n",
+        "  month,\n",
+        "  metric"
+      ]
+    },
+    {
+      "name": "loans_by_disbursement",
+      "displayName": "სესხები გაცემის ტიპის მიხედვით",
+      "queryLines": [
+        "SELECT\n",
+        "  dt.DisbursementTypeName AS disbursement_type,\n",
+        "  CASE\n",
+        "    WHEN l.IsProblemLoan = 1 THEN 'პრობლემური'\n",
+        "    ELSE 'ჯანსაღი'\n",
+        "  END AS loan_status,\n",
+        "  COUNT(DISTINCT l.LoanKey) AS loan_count\n",
+        "FROM\n",
+        "  getdata.raw.loan l\n",
+        "    JOIN getdata.raw.loandisbursetype dt\n",
+        "      ON l.DisbursementTypeKey = dt.DisbursementTypeKey\n",
+        "WHERE\n",
+        "  l.ValidTo > current_timestamp()\n",
+        "GROUP BY\n",
+        "  dt.DisbursementTypeName,\n",
+        "  l.IsProblemLoan\n",
+        "ORDER BY\n",
+        "  disbursement_type,\n",
+        "  loan_status"
+      ]
+    },
+    {
+      "name": "problem_loan_detail",
+      "displayName": "პრობლემური სესხების დეტალები",
+      "queryLines": [
+        "SELECT\n",
+        "  l.LoanKey,\n",
+        "  lt.LoanTypeNameLat AS loan_type,\n",
+        "  pg.LoanProductGroupName AS product_group,\n",
+        "  dt.DisbursementTypeName AS disbursement_type,\n",
+        "  l.AgreementStartDate,\n",
+        "  l.AgreementEndDate,\n",
+        "  l.AgreementInterestRate,\n",
+        "  CASE\n",
+        "    WHEN l.IsRefinanced = 1 THEN 'დიახ'\n",
+        "    ELSE 'არა'\n",
+        "  END AS is_refinanced\n",
+        "FROM\n",
+        "  getdata.raw.loan l\n",
+        "    JOIN getdata.raw.loantype lt\n",
+        "      ON l.LoanTypeKey = lt.LoanTypeKey\n",
+        "    JOIN getdata.raw.loanproductgroup pg\n",
+        "      ON l.LoanProductGroupKey = pg.LoanProductGroupKey\n",
+        "    LEFT JOIN getdata.raw.loandisbursetype dt\n",
+        "      ON l.DisbursementTypeKey = dt.DisbursementTypeKey\n",
+        "WHERE\n",
+        "  l.IsProblemLoan = 1\n",
+        "  AND l.ValidTo > current_timestamp()\n",
+        "ORDER BY\n",
+        "  l.AgreementStartDate"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "b00cd4d9",
+      "displayName": "Page 1",
+      "layout": [
+        {
+          "widget": {
+            "name": "kpi_total_loans",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_summary",
+                  "fields": [
+                    {
+                      "name": "sum(loan_count)",
+                      "expression": "SUM(`loan_count`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`loan_status` IN ('პრობლემური', 'ჯანსაღი')"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "სულ სესხები"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(loan_count)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_problem_loans",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_summary",
+                  "fields": [
+                    {
+                      "name": "sum(loan_count)",
+                      "expression": "SUM(`loan_count`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`loan_status` IN ('პრობლემური')"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "showTitle": true,
+                "title": "პრობლემური სესხები",
+                "description": {
+                  "value": "სულის 6.12%",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(loan_count)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 1,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi_avg_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpi_summary",
+                  "fields": [
+                    {
+                      "name": "max(avg_interest_rate)",
+                      "expression": "MAX(`avg_interest_rate`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`loan_status` IN ('პრობლემური')"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "showTitle": true,
+                "title": "საშ. საპროცენტო განაკვეთი (პრობლემური)",
+                "description": {
+                  "value": "ჯანსაღთან შედარებით: 14.17%",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(avg_interest_rate)",
+                  "formatTemplate": "{{ @formatted }}%"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 1,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "loans_by_type_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "loans_by_type",
+                  "fields": [
+                    {
+                      "name": "loan_status",
+                      "expression": "`loan_status`"
+                    },
+                    {
+                      "name": "loan_type",
+                      "expression": "`loan_type`"
+                    },
+                    {
+                      "name": "sum(loan_count)",
+                      "expression": "SUM(`loan_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "პრობლემური vs ჯანსაღი სესხები ტიპის მიხედვით"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "loan_type",
+                  "displayName": "loan_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(loan_count)",
+                  "displayName": "loan_count",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "loan_status",
+                  "displayName": "loan_status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "loans_by_product_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "loans_by_product",
+                  "fields": [
+                    {
+                      "name": "loan_status",
+                      "expression": "`loan_status`"
+                    },
+                    {
+                      "name": "product_group",
+                      "expression": "`product_group`"
+                    },
+                    {
+                      "name": "sum(loan_count)",
+                      "expression": "SUM(`loan_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "პრობლემური vs ჯანსაღი სესხები პროდუქტის ჯგუფის მიხედვით"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "product_group",
+                  "displayName": "product_group",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(loan_count)",
+                  "displayName": "loan_count",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "loan_status",
+                  "displayName": "loan_status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "balance_trends_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "balance_trends",
+                  "fields": [
+                    {
+                      "name": "loan_status",
+                      "expression": "`loan_status`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(total_balance)",
+                      "expression": "SUM(`total_balance`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "ყოველთვიური ბალანსის დინამიკა: პრობლემური vs ჯანსაღი"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(total_balance)",
+                  "displayName": "total_balance",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "loan_status",
+                  "displayName": "loan_status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "loan_financials_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "loan_financials",
+                  "fields": [
+                    {
+                      "name": "metric",
+                      "expression": "`metric`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(amount)",
+                      "expression": "SUM(`amount`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "ყოველთვიური პრობლემური სესხების ფინანსები"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(amount)",
+                  "displayName": "amount",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "metric",
+                  "displayName": "metric",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "loans_by_disbursement_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "loans_by_disbursement",
+                  "fields": [
+                    {
+                      "name": "loan_status",
+                      "expression": "`loan_status`"
+                    },
+                    {
+                      "name": "disbursement_type",
+                      "expression": "`disbursement_type`"
+                    },
+                    {
+                      "name": "sum(loan_count)",
+                      "expression": "SUM(`loan_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "პრობლემური vs ჯანსაღი სესხები გაცემის ტიპის მიხედვით"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "disbursement_type",
+                  "displayName": "disbursement_type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(loan_count)",
+                  "displayName": "loan_count",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "loan_status",
+                  "displayName": "loan_status",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 11,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "problem_loan_detail_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "problem_loan_detail",
+                  "fields": [
+                    {
+                      "name": "LoanKey",
+                      "expression": "`LoanKey`"
+                    },
+                    {
+                      "name": "loan_type",
+                      "expression": "`loan_type`"
+                    },
+                    {
+                      "name": "product_group",
+                      "expression": "`product_group`"
+                    },
+                    {
+                      "name": "disbursement_type",
+                      "expression": "`disbursement_type`"
+                    },
+                    {
+                      "name": "AgreementStartDate",
+                      "expression": "`AgreementStartDate`"
+                    },
+                    {
+                      "name": "AgreementEndDate",
+                      "expression": "`AgreementEndDate`"
+                    },
+                    {
+                      "name": "AgreementInterestRate",
+                      "expression": "`AgreementInterestRate`"
+                    },
+                    {
+                      "name": "is_refinanced",
+                      "expression": "`is_refinanced`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "პრობლემური სესხების დეტალური მონაცემები"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "LoanKey",
+                    "displayName": "სესხის კოდი"
+                  },
+                  {
+                    "fieldName": "loan_type",
+                    "displayName": "სესხის ტიპი"
+                  },
+                  {
+                    "fieldName": "product_group",
+                    "displayName": "პროდუქტის ჯგუფი"
+                  },
+                  {
+                    "fieldName": "disbursement_type",
+                    "displayName": "გაცემის ტიპი"
+                  },
+                  {
+                    "fieldName": "AgreementStartDate",
+                    "displayName": "ხელშეკრულების დაწყება"
+                  },
+                  {
+                    "fieldName": "AgreementEndDate",
+                    "displayName": "ხელშეკრულების დასრულება"
+                  },
+                  {
+                    "fieldName": "AgreementInterestRate",
+                    "displayName": "საპროცენტო განაკვეთი"
+                  },
+                  {
+                    "fieldName": "is_refinanced",
+                    "displayName": "რეფინანსირებული"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "loan_status_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f1ac538d98176aa7a0270f714afb1b/datasets/01f1ac5461b91e8d969853151e6e6afb_loan_status",
+                "query": {
+                  "datasetName": "kpi_summary",
+                  "fields": [
+                    {
+                      "name": "loan_status",
+                      "expression": "`loan_status`"
+                    },
+                    {
+                      "name": "loan_status_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "სესხის სტატუსი"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "loan_status",
+                    "queryName": "dashboards/01f1ac538d98176aa7a0270f714afb1b/datasets/01f1ac5461b91e8d969853151e6e6afb_loan_status"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 1
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
